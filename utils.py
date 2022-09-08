@@ -1,9 +1,9 @@
+import ast
 import os
 import sys
-from sys import platform
-import ast
 from ast import *
 from dataclasses import dataclass
+from sys import platform
 
 # move these to the compilers, use a method with overrides -Jeremy
 builtin_functions = \
@@ -657,7 +657,7 @@ class Inst(expr):
 
     def __str__(self):
         return str(self.generic) + str(self.type_args)
-    
+
 # An uninitialized value of a given type.
 # Needed for boxing local variables.
 @dataclass
@@ -824,7 +824,7 @@ class GenericVar:
     __match_args__ = ("id",)
     def __str__(self):
         return str(self.id)
-    
+
 @dataclass(eq=True)
 class AllType:
     params: list[str]
@@ -1186,7 +1186,7 @@ def compile_and_test(compiler, compiler_name,
             test_pass(passname, interp_dict, program_root, program, compiler_name)
     else:
         trace("\n# no shrink pass!")
-        
+
     passname = 'uniquify'
     if hasattr(compiler, passname):
         trace('\n# ' + passname + '\n')
@@ -1233,7 +1233,7 @@ def compile_and_test(compiler, compiler_name,
         total_passes += 1
         successful_passes += \
             test_pass(passname, interp_dict, program_root, program, compiler_name)
-        
+
     passname = 'cast_insert'
     if hasattr(compiler, passname):
         trace('\n# ' + passname + '\n')
