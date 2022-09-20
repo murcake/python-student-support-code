@@ -22,4 +22,7 @@ interp_dict = {
     "patch_instructions": interp_x86,
 }
 
+# run_one_test(
+#     "tests/var/very-many-vars.py", None, compiler, "var", typecheck_dict, interp_dict
+# )
 run_tests("var", compiler, "var", typecheck_dict, interp_dict)
