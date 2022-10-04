@@ -337,7 +337,7 @@ If.__repr__ = repr_If
 
 
 def str_IfExp(self):
-    return '(' + str(self.body) + ' if ' + str(self.test) + \
+    return '(if ' + str(self.test) + ' then ' + str(self.body) + \
            ' else ' + str(self.orelse) + ')'
 
 
@@ -672,7 +672,7 @@ class Uninitialized(expr):
 @dataclass
 class CProgram:
     __match_args__ = ("body",)
-    body: list[stmt]
+    body: dict[str, list[stmt]]
 
     def __str__(self):
         result = ''

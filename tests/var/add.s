@@ -1,9 +1,18 @@
 	.globl main
+	.align 16
 main:
     subq $8, %rsp
-    movq $42, %rax
-    movq %rax, %rdi
+    jmp start
+
+	.align 16
+start:
+    movq $42, %rdi
     callq print_int
+    movq $0, %rax
+
+	.align 16
+conclusion:
     addq $8, %rsp
     retq 
+
 

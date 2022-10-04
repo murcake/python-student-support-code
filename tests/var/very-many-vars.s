@@ -1,90 +1,101 @@
 	.globl main
+	.align 16
 main:
+    pushq %r12
     pushq %r14
     pushq %rbp
-    pushq %rbx
-    pushq %r12
     pushq %r13
+    pushq %rbx
     subq $96, %rsp
-    callq read_int
-    movq %rax, 32(%rsp)
+    jmp start
+
+	.align 16
+start:
     callq read_int
     movq %rax, %r14
     callq read_int
-    movq %rax, 72(%rsp)
+    movq %rax, %rbp
     callq read_int
-    movq %rax, 48(%rsp)
-    callq read_int
-    movq %rax, 0(%rsp)
-    callq read_int
-    movq %rax, %rbx
-    callq read_int
-    movq %rax, 40(%rsp)
-    callq read_int
-    movq %rax, %r13
-    callq read_int
-    movq %rax, 24(%rsp)
-    callq read_int
-    movq %rax, 16(%rsp)
-    callq read_int
-    movq %rax, %r12
+    movq %rax, 32(%rsp)
     callq read_int
     movq %rax, 56(%rsp)
     callq read_int
-    movq %rax, 8(%rsp)
+    movq %rax, 16(%rsp)
     callq read_int
-    movq %rax, %rbp
+    movq %rax, 24(%rsp)
+    callq read_int
+    movq %rax, 48(%rsp)
+    callq read_int
+    movq %rax, 40(%rsp)
+    callq read_int
+    movq %rax, 72(%rsp)
+    callq read_int
+    movq %rax, 8(%rsp)
     callq read_int
     movq %rax, 64(%rsp)
     callq read_int
-    movq %rax, %rdi
-    negq %r14
-    movq 32(%rsp), %rcx
-    addq %r14, %rcx
-    movq 48(%rsp), %rdx
-    negq %rdx
-    movq 72(%rsp), %rsi
-    addq %rdx, %rsi
-    movq %rcx, %rdx
-    addq %rsi, %rdx
-    negq %rbx
-    movq 0(%rsp), %rcx
-    addq %rbx, %rcx
-    addq %rcx, %rdx
-    movq %r13, %rcx
-    negq %rcx
-    movq 40(%rsp), %rsi
-    addq %rcx, %rsi
-    movq %rdx, %rcx
-    addq %rsi, %rcx
-    movq 16(%rsp), %rsi
-    negq %rsi
-    movq 24(%rsp), %rdx
-    addq %rsi, %rdx
-    movq %rcx, %rsi
-    addq %rdx, %rsi
-    movq 56(%rsp), %rcx
-    negq %rcx
-    addq %rcx, %r12
-    movq %rsi, %rdx
-    addq %r12, %rdx
+    movq %rax, 0(%rsp)
+    callq read_int
+    movq %rax, %r13
+    callq read_int
+    movq %rax, %rbx
+    callq read_int
+    movq %rax, %r12
+    callq read_int
+    movq %rax, %rcx
     negq %rbp
-    movq 8(%rsp), %rcx
-    addq %rbp, %rcx
-    addq %rcx, %rdx
+    movq %r14, %rsi
+    addq %rbp, %rsi
+    movq 56(%rsp), %rdi
     negq %rdi
-    movq 64(%rsp), %rcx
-    addq %rdi, %rcx
+    movq 32(%rsp), %rdx
+    addq %rdi, %rdx
+    addq %rdx, %rsi
+    movq 24(%rsp), %rdi
+    negq %rdi
+    movq 16(%rsp), %rdx
+    addq %rdi, %rdx
+    addq %rdx, %rsi
+    movq 40(%rsp), %rdi
+    negq %rdi
+    movq 48(%rsp), %rdx
+    addq %rdi, %rdx
+    addq %rdx, %rsi
+    movq 8(%rsp), %rdx
+    negq %rdx
+    movq 72(%rsp), %rdi
+    addq %rdx, %rdi
+    addq %rdi, %rsi
+    movq 0(%rsp), %rdx
+    negq %rdx
+    movq 64(%rsp), %rdi
+    addq %rdx, %rdi
+    movq %rsi, %r8
+    addq %rdi, %r8
+    movq %rbx, %rsi
+    negq %rsi
+    movq %r13, %rdx
+    addq %rsi, %rdx
+    movq %r8, %rsi
+    addq %rdx, %rsi
+    negq %rcx
+    movq %r12, %rdx
     addq %rcx, %rdx
-    movq $42, %rax
-    addq %rax, %rdx
-    movq %rdx, %rdi
+    movq %rsi, %rcx
+    addq %rdx, %rcx
+    addq $42, %rcx
+    movq %rcx, %rdi
     callq print_int
+    movq $0, %rax
+
+	.align 16
+conclusion:
     addq $96, %rsp
-    popq %r13
-    popq %r12
     popq %rbx
+    popq %r13
     popq %rbp
     popq %r14
+    popq %r12
     retq 
+
 
