@@ -1,2 +1,4 @@
 **/__pycache__/
 /runtime.o
+tests/**/*.out
+/a.out

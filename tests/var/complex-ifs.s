@@ -22,21 +22,21 @@ block_1:
     movzbq %al, %rdi
     cmpq %rcx, %rbx
     setl %al
-    movzbq %al, %r8
-    cmpq %rcx, %rbx
-    setg %al
     movzbq %al, %rsi
     cmpq %rcx, %rbx
-    setge %al
+    setg %al
     movzbq %al, %rdx
+    cmpq %rcx, %rbx
+    setge %al
+    movzbq %al, %r8
     jmp block_3
 
 	.align 16
 block_2:
     movq $1, %rdi
-    movq $1, %r8
     movq $1, %rsi
     movq $1, %rdx
+    movq $1, %r8
     jmp block_3
 
 	.align 16
@@ -68,7 +68,7 @@ block_24:
 
 	.align 16
 block_31:
-    cmpq $1, %rsi
+    cmpq $1, %rdx
     je block_34
     movq $0, %rdx
     jmp block_36
@@ -82,12 +82,13 @@ block_32:
 block_33:
     cmpq $1, %rdx
     je block_47
-    subq %rcx, %rbx
-    movq %rbx, %rdi
+    movq %rbx, %rdx
+    subq %rcx, %rdx
     jmp block_48
 
 	.align 16
 block_34:
+    movq %r8, %rdx
     jmp block_36
 
 	.align 16
@@ -101,7 +102,7 @@ block_36:
 
 	.align 16
 block_37:
-    cmpq $1, %r8
+    cmpq $1, %rsi
     je block_31
     jmp block_32
 
@@ -110,17 +111,18 @@ block_39:
 
 	.align 16
 block_46:
-    subq %rcx, %rbx
-    movq %rbx, %rdi
+    movq %rbx, %rdx
+    subq %rcx, %rdx
     jmp block_48
 
 	.align 16
 block_47:
-    movq $0, %rdi
+    movq $0, %rdx
     jmp block_48
 
 	.align 16
 block_48:
+    movq %rdx, %rdi
     callq print_int
     movq $0, %rax
 

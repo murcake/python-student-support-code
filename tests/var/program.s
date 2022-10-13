@@ -14,10 +14,9 @@ start:
     callq read_int
     movq %rax, %rcx
     callq read_int
-    movq %rax, %rcx
-    addq %rbx, %rcx
-    addq $2, %rcx
-    movq %rcx, %rdi
+    movq %rax, %rdi
+    addq %rbx, %rdi
+    addq $2, %rdi
     callq print_int
     movq $0, %rax
 

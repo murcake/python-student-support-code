@@ -1008,7 +1008,7 @@ class Compiler:
     def patch_instructions(self, p: X86Program) -> X86Program:
         return PatchInstructions().run(p)
 
-    @tracing_res
+    # @tracing_res
     def prelude_and_conclusion(self, p: X86Program) -> X86Program:
         body = extract_program_body(p)
         if self.__n_spilled_vars is None or self.__used_callees is None:

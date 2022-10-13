@@ -1,3 +1,5 @@
+import os
+
 import compiler
 import type_check_Lif
 from interp_Lif import InterpLif
@@ -20,6 +22,8 @@ interp_dict = {
     "patch_instructions": interp_x86,
 }
 
+
+print(f"PYTHONHASHSEED={os.environ.get('PYTHONHASHSEED')}")
 
 # run_one_test(
 #     "tests/var/complex-ifs.py", None, compiler, "var", typecheck_dict, interp_dict
