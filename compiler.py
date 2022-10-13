@@ -60,100 +60,6 @@ class UnsupportedInstr(CompilerError):
         super().__init__(msg)
 
 
-class PartialEvaluator:
-    def __init__(self):
-        self.__constant_vars: dict[py.Name, py.Constant] = {}
-
-    def run(self, p: py.Module) -> py.Module:
-        return self._visit_module(p)
-
-    def _visit_module(self, p: py.Module) -> py.Module:
-        body = []
-        for stmt_ in p.body:
-            if stmt := self._visit_stmt(stmt_):
-                body.append(stmt)
-        return py.Module(body)
-
-    def _visit_stmt(self, stmt: py.stmt) -> None | py.stmt:
-        match stmt:
-            case py.Assign([py.Name() as lhs], value_):
-                value = self._visit_expr(value_)
-                if isinstance(value, py.Constant):
-                    self.__constant_vars[lhs] = value
-                return py.Assign([lhs], value)
-            case py.Expr(py.Call(py.Name("print"), args_)):
-                args = [self._visit_expr(x) for x in args_]
-                return py.Expr(py.Call(py.Name("print"), args))
-            case py.Expr(expr_):
-                expr = self._visit_expr(expr_)
-                if isinstance(expr, py.Constant):
-                    return None
-                return py.Expr(expr)
-            case _:
-                raise UnsupportedNode(stmt)
-
-    def _visit_expr(self, expr: py.expr) -> py.expr:
-        match expr:
-            case py.Constant() | py.Call(py.Name("input_int")):
-                return expr
-            case py.Name():
-                return self.__constant_vars.get(expr, expr)
-            case py.UnaryOp(py.USub(), arg):
-                return self._visit_usub(self._visit_expr(arg))
-            case py.BinOp(arg1_, py.Sub(), arg2_):
-                arg1 = self._visit_expr(arg1_)
-                arg2 = self._visit_expr(py.UnaryOp(py.USub(), arg2_))
-                return self._visit_add(arg1, arg2)
-            case py.BinOp(arg1_, py.Add(), arg2_):
-                return self._visit_add(self._visit_expr(arg1_), self._visit_expr(arg2_))
-            case _:
-                raise UnsupportedNode(expr)
-
-    def _visit_usub(self, expr: py.expr) -> py.expr:
-        match expr:
-            case py.Constant(v):
-                return py.Constant(-v)
-            case py.UnaryOp(py.USub(), x):
-                return x
-            case py.BinOp(x, py.Add(), y):
-                return py.BinOp(
-                    py.UnaryOp(py.USub(), x), py.Add(), py.UnaryOp(py.USub(), y)
-                )
-            case _:
-                return py.UnaryOp(py.USub(), expr)
-
-    def _visit_add(self, x: py.expr, y: py.expr) -> py.expr:
-        match (x, y):
-            case (a, py.Constant(0)):
-                return a
-            case (py.Constant(a), py.Constant(c)):
-                return py.Constant(a + c)
-            case (py.Constant() as a, c):
-                return self._visit_add(c, a)  # safe, a is side-effect free
-            case (py.BinOp(a, py.Add(), py.Constant(b)), py.Constant(c)):
-                return self._visit_add(a, py.Constant(b + c))
-            case (a, py.BinOp(c, py.Add(), py.Constant() as d)):
-                return py.BinOp(py.BinOp(a, py.Add(), c), py.Add(), d)
-            case (a, c):
-                return py.BinOp(a, py.Add(), c)
-
-
-class PartialEvaluatorIf(PartialEvaluator):
-    def _visit_stmt(self, stmt: py.stmt) -> py.stmt | None:
-        match stmt:
-            case py.If():
-                return stmt
-            case _:
-                return super()._visit_stmt(stmt)
-
-    def _visit_expr(self, expr: py.expr) -> py.expr:
-        match expr:
-            case py.IfExp() | py.BoolOp() | py.Compare():
-                return expr
-            case _:
-                return super()._visit_expr(expr)
-
-
 class RemoveComplexOperands:
     def __init__(self):
         self.tmp_cnt: int = 0
@@ -975,13 +881,7 @@ class Compiler:
         self.__used_callees: None | list[x86.Reg] = None
 
     # @tracing_res
-    def partially_evaluate(self, p: py.Module) -> py.Module:
-        return PartialEvaluatorIf().run(p)
-
-    # @tracing_res
-    def remove_complex_operands(self, p: py.Module, optimize=True) -> py.Module:
-        if optimize:
-            p = self.partially_evaluate(p)
+    def remove_complex_operands(self, p: py.Module) -> py.Module:
         return RemoveComplexOperandsIf().run(p)
 
     # @tracing_res

@@ -7,11 +7,12 @@ main:
 	.align 16
 start:
     movq $1, %rcx
-    movq $42, %rcx
-    movq $8, %rcx
-    movq $8, %rcx
-    movq $50, %rcx
-    movq $42, %rdi
+    movq $42, %rdx
+    addq $7, %rcx
+    movq %rcx, %rdi
+    addq %rdx, %rdi
+    negq %rcx
+    addq %rcx, %rdi
     callq print_int
     movq $0, %rax
 

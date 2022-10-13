@@ -6,7 +6,8 @@ main:
 
 	.align 16
 start:
-    movq $42, %rdi
+    movq $40, %rdi
+    addq $2, %rdi
     callq print_int
     movq $0, %rax
 
