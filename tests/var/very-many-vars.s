@@ -12,73 +12,74 @@ main:
 	.align 16
 start:
     callq read_int
+    movq %rax, 56(%rsp)
+    callq read_int
+    movq %rax, %rbx
+    callq read_int
+    movq %rax, 40(%rsp)
+    callq read_int
+    movq %rax, 32(%rsp)
+    callq read_int
+    movq %rax, %rbp
+    callq read_int
     movq %rax, 8(%rsp)
     callq read_int
-    movq %rax, 56(%rsp)
+    movq %rax, 0(%rsp)
     callq read_int
     movq %rax, 16(%rsp)
     callq read_int
-    movq %rax, %rbp
+    movq %rax, 48(%rsp)
+    callq read_int
+    movq %rax, %r14
+    callq read_int
+    movq %rax, %r13
     callq read_int
     movq %rax, 24(%rsp)
     callq read_int
     movq %rax, 64(%rsp)
     callq read_int
-    movq %rax, 32(%rsp)
+    movq %rax, %r12
     callq read_int
     movq %rax, 72(%rsp)
     callq read_int
-    movq %rax, 40(%rsp)
-    callq read_int
-    movq %rax, 0(%rsp)
-    callq read_int
-    movq %rax, %r12
-    callq read_int
-    movq %rax, 48(%rsp)
-    callq read_int
-    movq %rax, %r13
-    callq read_int
-    movq %rax, %rbx
-    callq read_int
-    movq %rax, %r14
-    callq read_int
-    movq %rax, %rdx
-    movq 56(%rsp), %rcx
-    negq %rcx
-    movq 8(%rsp), %rsi
-    addq %rcx, %rsi
-    movq %rbp, %rcx
-    negq %rcx
-    movq 16(%rsp), %rdi
-    addq %rcx, %rdi
-    addq %rdi, %rsi
-    movq 64(%rsp), %rcx
-    negq %rcx
-    movq 24(%rsp), %rdi
-    addq %rcx, %rdi
-    addq %rdi, %rsi
-    movq 72(%rsp), %rdi
-    negq %rdi
-    movq 32(%rsp), %rcx
-    addq %rdi, %rcx
-    addq %rcx, %rsi
-    movq 0(%rsp), %rdi
-    negq %rdi
-    movq 40(%rsp), %rcx
-    addq %rdi, %rcx
-    addq %rcx, %rsi
-    movq 48(%rsp), %rcx
-    negq %rcx
-    addq %rcx, %r12
-    movq %rsi, %rcx
-    addq %r12, %rcx
+    movq %rax, %rdi
     negq %rbx
-    addq %rbx, %r13
-    movq %rcx, %rsi
-    addq %r13, %rsi
-    movq %rdx, %rcx
+    movq 56(%rsp), %rsi
+    addq %rbx, %rsi
+    movq 32(%rsp), %rcx
     negq %rcx
+    movq 40(%rsp), %rdx
+    addq %rcx, %rdx
+    addq %rdx, %rsi
+    movq 8(%rsp), %rdx
+    negq %rdx
+    movq %rbp, %rcx
+    addq %rdx, %rcx
+    movq %rsi, %rdx
+    addq %rcx, %rdx
+    movq 16(%rsp), %rsi
+    negq %rsi
+    movq 0(%rsp), %rcx
+    addq %rsi, %rcx
+    movq %rdx, %rsi
+    addq %rcx, %rsi
     movq %r14, %rdx
+    negq %rdx
+    movq 48(%rsp), %rcx
+    addq %rdx, %rcx
+    addq %rcx, %rsi
+    movq 24(%rsp), %rdx
+    negq %rdx
+    movq %r13, %rcx
+    addq %rdx, %rcx
+    addq %rcx, %rsi
+    negq %r12
+    movq 64(%rsp), %rcx
+    addq %r12, %rcx
+    addq %rcx, %rsi
+    movq %rdi, %rcx
+    negq %rcx
+    movq 72(%rsp), %rdx
     addq %rcx, %rdx
     movq %rsi, %rcx
     addq %rdx, %rcx
@@ -86,6 +87,7 @@ start:
     movq %rcx, %rdi
     callq print_int
     movq $0, %rax
+    jmp conclusion
 
 	.align 16
 conclusion:

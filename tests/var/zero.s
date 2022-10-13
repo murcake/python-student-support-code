@@ -9,6 +9,7 @@ start:
     movq $0, %rdi
     callq print_int
     movq $0, %rax
+    jmp conclusion
 
 	.align 16
 conclusion:

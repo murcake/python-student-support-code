@@ -1,53 +1,57 @@
 	.globl main
 	.align 16
 main:
+    pushq %r14
+    pushq %rbp
     pushq %rbx
-    subq $16, %rsp
+    pushq %r12
+    pushq %r13
+    subq $32, %rsp
     jmp start
 
 	.align 16
 start:
     callq read_int
-    movq %rax, %rbx
+    movq %rax, %r14
     callq read_int
-    movq %rax, %r8
-    cmpq %r8, %rbx
+    movq %rax, 0(%rsp)
+    cmpq 0(%rsp), %r14
     jne block_4
     jmp block_2
 
 	.align 16
 block_1:
-    cmpq %r8, %rbx
+    cmpq 0(%rsp), %r14
     setl %al
-    movzbq %al, %rsi
-    cmpq %r8, %rbx
+    movzbq %al, %rbx
+    cmpq 0(%rsp), %r14
     setl %al
-    movzbq %al, %rdx
-    cmpq %r8, %rbx
+    movzbq %al, %r12
+    cmpq 0(%rsp), %r14
     setg %al
-    movzbq %al, %rdi
-    cmpq %r8, %rbx
+    movzbq %al, %r12
+    cmpq 0(%rsp), %r14
     setge %al
-    movzbq %al, %rcx
+    movzbq %al, %r12
     jmp block_3
 
 	.align 16
 block_2:
-    movq $1, %rsi
-    movq $1, %rdx
-    movq $1, %rdi
-    movq $1, %rcx
+    movq $1, %rbx
+    movq $1, %r12
+    movq $1, %r12
+    movq $1, %r12
     jmp block_3
 
 	.align 16
 block_3:
-    cmpq $1, %rsi
+    cmpq $1, %rbx
     je block_37
     jmp block_32
 
 	.align 16
 block_4:
-    cmpq %r8, %rbx
+    cmpq 0(%rsp), %r14
     je block_1
     jmp block_1
 
@@ -59,7 +63,7 @@ block_12:
 
 	.align 16
 block_23:
-    cmpq %r8, %rbx
+    cmpq 0(%rsp), %r14
     jne block_4
     jmp block_2
 
@@ -68,40 +72,43 @@ block_24:
 
 	.align 16
 block_31:
-    cmpq $1, %rdi
+    cmpq $1, %r12
     je block_34
-    movq $0, %rcx
+    movq $0, 8(%rsp)
     jmp block_36
 
 	.align 16
 block_32:
-    movq $0, %rcx
+    movq $0, %rbp
     jmp block_33
 
 	.align 16
 block_33:
-    cmpq $1, %rcx
+    cmpq $1, %rbp
     je block_47
-    movq %rbx, %rdi
-    subq %r8, %rdi
+    movq %r14, %rcx
+    subq 0(%rsp), %rcx
+    movq %rcx, %r13
     jmp block_48
 
 	.align 16
 block_34:
+    movq %r12, 8(%rsp)
     jmp block_36
 
 	.align 16
 block_35:
-    movq $0, %rcx
+    movq $0, 8(%rsp)
     jmp block_36
 
 	.align 16
 block_36:
+    movq 8(%rsp), %rbp
     jmp block_33
 
 	.align 16
 block_37:
-    cmpq $1, %rdx
+    cmpq $1, %r12
     je block_31
     jmp block_32
 
@@ -110,24 +117,31 @@ block_39:
 
 	.align 16
 block_46:
-    movq %rbx, %rdi
-    subq %r8, %rdi
+    movq %r14, %rcx
+    subq 0(%rsp), %rcx
+    movq %rcx, %r13
     jmp block_48
 
 	.align 16
 block_47:
-    movq $0, %rdi
+    movq $0, %r13
     jmp block_48
 
 	.align 16
 block_48:
+    movq %r13, %rdi
     callq print_int
     movq $0, %rax
+    jmp conclusion
 
 	.align 16
 conclusion:
-    addq $16, %rsp
+    addq $32, %rsp
+    popq %r13
+    popq %r12
     popq %rbx
+    popq %rbp
+    popq %r14
     retq 
 
 

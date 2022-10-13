@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import ast as py
 import sys
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Iterable
 from contextlib import contextmanager
+from functools import reduce
 from itertools import chain
 from types import MappingProxyType
 from typing import Generic, TypeVar
 
 import x86_ast as x86
+from graph import DirectedAdjList, transpose
 from priority_queue import PriorityQueue
 from utils import Begin as PyBegin
 from utils import CProgram
@@ -148,18 +150,22 @@ class RemoveComplexOperandsIf(RemoveComplexOperands):
             case _:
                 return super()._visit_stmt_meat(stmt)
 
+    def _visit_expr(
+        self, expr_: py.expr, mk_atomic: bool, locally: bool = False
+    ) -> py.expr:
+        if not locally:
+            return super()._visit_expr(expr_, mk_atomic)
+        with self._new_scope():
+            expr = super()._visit_expr(expr_, mk_atomic)
+            assigns = self._get_tmp_assignments()
+            return PyBegin(list(assigns), expr)
+
     def _visit_expr_meat(self, expr: py.expr, mk_atomic: bool) -> py.expr:
         match expr:
             case py.IfExp(test_, body_, orelse_):
                 test = self._visit_expr(test_, mk_atomic=False)
-                with self._new_scope():
-                    body_expr = self._visit_expr(body_, mk_atomic=mk_atomic)
-                    assigns = self._get_tmp_assignments()
-                    body = PyBegin(list(assigns), body_expr)
-                with self._new_scope():
-                    orelse_expr = self._visit_expr(orelse_, mk_atomic=mk_atomic)
-                    assigns = self._get_tmp_assignments()
-                    orelse = PyBegin(list(assigns), orelse_expr)
+                body = self._visit_expr(body_, mk_atomic=mk_atomic, locally=True)
+                orelse = self._visit_expr(orelse_, mk_atomic=mk_atomic, locally=True)
                 return py.IfExp(test, body, orelse)
             case py.UnaryOp(py.Not(), arg):
                 return py.UnaryOp(py.Not(), self._visit_expr(arg, mk_atomic=True))
@@ -177,6 +183,18 @@ class RemoveComplexOperandsIf(RemoveComplexOperands):
                 return super()._visit_expr_meat(expr, mk_atomic)
 
 
+class RemoveComplexOperandsWhile(RemoveComplexOperandsIf):
+    def _visit_stmt_meat(self, stmt: py.stmt) -> py.stmt:
+        match stmt:
+            case py.While(test_, body_, orelse_):
+                test = self._visit_expr(test_, mk_atomic=False, locally=True)
+                body = list(self._visit_stmts(body_))
+                orelse = list(self._visit_stmts(orelse_))
+                return py.While(test, body, orelse)
+            case _:
+                return super()._visit_stmt_meat(stmt)
+
+
 class Block:
     name: str
     stmts: list[py.stmt]
@@ -185,7 +203,7 @@ class Block:
         self.name = name
         self.stmts = stmts or []
 
-    def _as_jump(self) -> list[py.stmt]:
+    def as_jump(self) -> list[py.stmt]:
         match self.stmts:
             case [CGoto()]:
                 return self.stmts
@@ -194,7 +212,7 @@ class Block:
     def link_to(self, b: Block) -> None:
         if self.stmts and isinstance(self.stmts[-1], CGoto):
             return
-        self.stmts.extend(b._as_jump())
+        self.stmts.extend(b.as_jump())
 
 
 class ExplicateControl:
@@ -227,7 +245,6 @@ class ExplicateControl:
     def _visit_assign(self, lhs: py.Name, value: py.expr) -> None:
         match value:
             case py.IfExp(test, PyBegin(body_, body_r), PyBegin(orelse_, orelse_r)):
-                # breakpoint()
                 body_assign = py.Assign([lhs], body_r)
                 orelse_assign = py.Assign([lhs], orelse_r)
                 self._visit_if(test, body_ + [body_assign], orelse_ + [orelse_assign])
@@ -259,12 +276,12 @@ class ExplicateControl:
             case py.Name() as n:
                 self._visit_if_blocks(py.Compare(n, [py.Eq()], [pyTrue]), body, orelse)
             case py.Compare():
-                self._emit(py.If(test, body._as_jump(), orelse._as_jump()))
+                self._emit(py.If(test, body.as_jump(), orelse.as_jump()))
             case py.UnaryOp(py.Not(), not_test):
                 self._visit_if_blocks(not_test, orelse, body)
             case py.IfExp(i_test, i_body, i_orelse):
-                body_link = body._as_jump()
-                orelse_link = orelse._as_jump()
+                body_link = body.as_jump()
+                orelse_link = orelse.as_jump()
                 lifted_body: list[py.stmt] = [py.If(i_body, body_link, orelse_link)]
                 lifted_orelse: list[py.stmt] = [py.If(i_orelse, body_link, orelse_link)]
                 self._visit_if(i_test, lifted_body, lifted_orelse)
@@ -289,6 +306,19 @@ class ExplicateControl:
     def _mk_fresh_block_name(self) -> str:
         self.block_cnt += 1
         return label_name(f"block_{self.block_cnt}")
+
+
+class ExplicateControlWhile(ExplicateControl):
+    def _visit_stmt(self, stmt: py.stmt) -> None:
+        match stmt:
+            case py.While(test_, body_):
+                head_block = self._mk_block()
+                self.current_block.link_to(head_block)
+                self._continue_with(head_block)
+                body = body_ + head_block.as_jump()
+                super()._visit_if(test_, body, [])
+            case _:
+                super()._visit_stmt(stmt)
 
 
 class X86Builder:
@@ -535,8 +565,10 @@ class RemoveJumps(X86Builder):
     def run(self, prog: X86Program) -> X86Program:
         self.blocks = extract_program_body(prog)
         self.links = count_block_links(self.blocks)
+        self.links[start_label] = -1  # to mark special cases
+        self.links[conclusion_label] = -1
         for (label, instrs) in self.blocks.items():
-            if self.links[label] == 0 and label not in (start_label, conclusion_label):
+            if self.links[label] == 0:
                 continue
             with self._new_block(label):
                 for instr in instrs:
@@ -674,29 +706,27 @@ class AssignHomes:
 
 class ColorLocations:
     def __init__(self, prog: X86Program):
-        self.live_memo: dict[str, set[x86.location]] = {}
         self.blocks: dict[str, list[x86.instr]] = extract_program_body(prog)
+        self.live_befores = get_live_befores(prog)
         self.move_graph: Graph[x86.location] = Graph()
         self.interference_graph: Graph[x86.location] = Graph()
 
     def run(self) -> dict[location, Color]:
-        self._visit_block(start_label)
+        for label in self.blocks.keys():
+            self._visit_block(label)
         return color_graph(self.interference_graph, self.move_graph)
 
     def _visit_block(self, label: str):
-        if label in self.live_memo:
-            return
         last_live = set()
         for instr in reversed(self.blocks[label]):
             last_live = self._visit_instr(instr, last_live)
-        self.live_memo[label] = last_live
 
     def _visit_instr(self, i: x86.instr, live_after: set[x86.location]):
         match i:
             case x86.Jump(label):
-                return self._get_live_of_block(label)
+                return self.live_befores[label]
             case x86.JumpIf(_, label):
-                return live_after | self._get_live_of_block(label)
+                return live_after | self.live_befores[label]
             case _:
                 r_set, w_set = get_read_write_sets(i)
                 self._update_graphs(i, live_after, r_set, w_set)
@@ -709,7 +739,7 @@ class ColorLocations:
         read_set: set[x86.location],
         write_set: set[x86.location],
     ):
-        for v in chain(read_set, write_set):
+        for v in chain(read_set, write_set, live_after):
             self.interference_graph.add_vertex(v)
             self.move_graph.add_vertex(v)
         match parse_movq(i):
@@ -726,9 +756,54 @@ class ColorLocations:
                 if loc != w:
                     self.interference_graph.connect(w, loc)
 
-    def _get_live_of_block(self, label: str) -> set[x86.location]:
-        self._visit_block(label)
-        return self.live_memo[label]
+
+def get_live_befores(prog: X86Program) -> dict[str, set[x86.location]]:
+    def transfer(node: str, live_after: set[x86.location]) -> set[x86.location]:
+        for instr in reversed(blocks[node]):
+            if not isinstance(instr, (x86.Jump, x86.JumpIf)):
+                r_set, w_set = get_read_write_sets(instr)
+                live_after = live_after - w_set | r_set
+        return live_after
+
+    blocks = extract_program_body(prog)
+    cfg = build_cfg(prog)
+    return analyze_dataflow(cfg, transfer, set(), lambda a, b: a | b)
+
+
+def build_cfg(prog: X86Program) -> DirectedAdjList:
+    blocks = extract_program_body(prog)
+    g = DirectedAdjList()
+    worklist = deque([start_label])
+    visited = set()
+    while worklist:
+        head = worklist.popleft()
+        if head in visited:
+            continue
+        visited.add(head)
+        for instr in blocks[head]:
+            if isinstance(instr, (x86.Jump, x86.JumpIf)):
+                g.add_edge(head, instr.label)
+                worklist.append(instr.label)
+    return g
+
+
+def analyze_dataflow(G, transfer, bottom, join) -> dict:
+    trans_G = transpose(G)
+    mapping = {}
+    for v in G.vertices():
+        mapping[v] = bottom
+    worklist = deque()
+    for v in G.vertices():
+        worklist.append(v)
+    while worklist:
+        node = worklist.pop()
+        input = reduce(join, [mapping[v] for v in trans_G.adjacent(node)], bottom)
+        output = transfer(node, input)
+        if output != mapping[node]:
+            mapping[node] = output
+            for v in G.adjacent(node):
+                worklist.append(v)
+    return mapping
 
 
 def get_read_write_sets(i: x86.instr) -> tuple[set[x86.location], set[x86.location]]:
@@ -840,6 +915,10 @@ class PatchInstructions(X86Builder):
             case x86.Instr("cmpq", [rhs, x86.Immediate() as lhs]):
                 self._emit(movq(lhs, rax))
                 self._visit_instr(cmpq(rhs=rhs, lhs=rax))
+            case x86.Instr("movzbq", [src, dst]) if not isinstance(dst, x86.Reg):
+                assert src == al
+                self._emit(movzbq_al(rax))
+                self._emit(movq(rax, dst))
             case x86.Instr(name, [arg1, arg2]) if self.__needs_split(arg1, arg2):
                 self._emit(movq(arg1, rax))
                 self._emit(x86.Instr(name, [rax, arg2]))
@@ -882,16 +961,17 @@ class Compiler:
 
     # @tracing_res
     def remove_complex_operands(self, p: py.Module) -> py.Module:
-        return RemoveComplexOperandsIf().run(p)
+        return RemoveComplexOperandsWhile().run(p)
 
     # @tracing_res
     def explicate_control(self, p: py.Module) -> CProgram:
-        return ExplicateControl().run(p)
+        return ExplicateControlWhile().run(p)
 
     # @tracing_res
     def select_instructions(self, p: CProgram) -> X86Program:
         return SelectInstructionsIf().run(p)
 
+    # @tracing_res
     def remove_jumps(self, p: X86Program) -> X86Program:
         return RemoveJumps().run(p)
 
@@ -955,8 +1035,8 @@ def key_to_cmp(key_f):
 
 
 class Graph(Generic[T]):
-    def __init__(self, vertices: set[T] = set()):
-        self.edges: dict[T, set[T]] = {v: set() for v in vertices}
+    def __init__(self, vertices: set[T] | None = None):
+        self.edges: dict[T, set[T]] = {v: set() for v in vertices or set()}
 
     def add_vertex(self, v: T) -> None:
         self.edges.setdefault(v, set())

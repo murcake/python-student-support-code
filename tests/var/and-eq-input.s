@@ -1,7 +1,8 @@
 	.globl main
 	.align 16
 main:
-    subq $8, %rsp
+    pushq %rbx
+    subq $16, %rsp
     jmp start
 
 	.align 16
@@ -14,22 +15,25 @@ start:
 
 	.align 16
 block_1:
-    movq $0, %rdi
+    movq $0, %rbx
     jmp block_3
 
 	.align 16
 block_2:
-    movq $42, %rdi
+    movq $42, %rbx
     jmp block_3
 
 	.align 16
 block_3:
+    movq %rbx, %rdi
     callq print_int
     movq $0, %rax
+    jmp conclusion
 
 	.align 16
 conclusion:
-    addq $8, %rsp
+    addq $16, %rsp
+    popq %rbx
     retq 
 
 	.align 16
