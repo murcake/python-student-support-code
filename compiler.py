@@ -3,21 +3,26 @@ from __future__ import annotations
 import ast as py
 import sys
 from collections import defaultdict, deque
-from collections.abc import Iterable
+from collections.abc import Callable, Collection, Iterable
 from contextlib import contextmanager
 from functools import reduce
 from itertools import chain
 from types import MappingProxyType
-from typing import Generic, TypeVar
+from typing import Generic, Type, TypeVar
 
 import x86_ast as x86
 from graph import DirectedAdjList, transpose
 from priority_queue import PriorityQueue
+from type_check_Ctup import TypeCheckCtup
+from type_check_Ltup import TypeCheckLtup
+from utils import Allocate as PyAllocate
 from utils import Begin as PyBegin
+from utils import Collect as PyCollect
 from utils import CProgram
+from utils import GlobalValue as PyGlobal
 from utils import Goto as CGoto
-from utils import label_name
-from x86_ast import X86Program, location
+from utils import IntType, TupleType, label_name
+from x86_ast import X86Program
 
 
 class CompilerError(Exception):
@@ -62,9 +67,95 @@ class UnsupportedInstr(CompilerError):
         super().__init__(msg)
 
 
+class ExposeAllocation:
+    def __init__(self, name_gen: NameGen):
+        self.name_gen = name_gen
+
+    def run(self, p: py.Module) -> py.Module:
+        return py.Module(list(self._visit_stmts(p.body)))
+
+    def _visit_stmts(self, stmts: Iterable[py.stmt]) -> Iterable[py.stmt]:
+        for stmt in stmts:
+            yield self._visit_stmt(stmt)
+
+    def _visit_stmt(self, stmt: py.stmt) -> py.stmt:
+        match stmt:
+            case py.Assign([lhs_], value_):
+                return py.Assign([self._visit_expr(lhs_)], self._visit_expr(value_))
+            case py.Expr(expr_):
+                return py.Expr(self._visit_expr(expr_))
+            case py.If(test_, body_, orelse_):
+                test = self._visit_expr(test_)
+                body = list(self._visit_stmts(body_))
+                orelse = list(self._visit_stmts(orelse_))
+                return py.If(test, body, orelse)
+            case py.While(test_, body_, orelse_):
+                test = self._visit_expr(test_)
+                body = list(self._visit_stmts(body_))
+                orelse = list(self._visit_stmts(orelse_))
+                return py.While(test, body, orelse)
+            case _:
+                raise UnsupportedNode(stmt)
+
+    def _visit_expr(self, expr: py.expr) -> py.expr:
+        match expr:
+            case py.Name() | py.Constant():
+                return expr
+            case py.Call(f_, args_):
+                f = self._visit_expr(f_)
+                args = [self._visit_expr(x) for x in args_]
+                return py.Call(f, args)
+            case py.UnaryOp(op, arg_):
+                return py.UnaryOp(op, self._visit_expr(arg_))
+            case py.BinOp(a_, op, b_):
+                return py.BinOp(self._visit_expr(a_), op, self._visit_expr(b_))
+            case py.IfExp(test_, body_, orelse_):
+                test = self._visit_expr(test_)
+                body = self._visit_expr(body_)
+                orelse = self._visit_expr(orelse_)
+                return py.IfExp(test, body, orelse)
+            case py.BoolOp(op, args_):
+                return py.BoolOp(op, [self._visit_expr(x) for x in args_])
+            case py.Compare(a_, ops, bs_):
+                a = self._visit_expr(a_)
+                bs = [self._visit_expr(x) for x in bs_]
+                return py.Compare(a, ops, bs)
+            case py.Tuple(elts_):
+                elts = [self._visit_expr(x) for x in elts_]
+                return mk_tuple_create(elts, extract_type(expr), self.name_gen)
+            case py.Subscript(what_, at_, r):
+                return py.Subscript(self._visit_expr(what_), self._visit_expr(at_), r)
+            case _:
+                raise UnsupportedNode(expr)
+
+
+def mk_tuple_create(elts: Collection[py.expr], typ: Type, name_gen: NameGen) -> PyBegin:
+    length = len(elts)
+    n_bytes = 8 + 8 * length
+    s = []
+    elt_names = []
+    for elt in elts:
+        elt_name = name_gen.tuple_elt()
+        elt_names.append(elt_name)
+        s.append(py.Assign([elt_name], elt))
+    test_lhs = py.BinOp(py_free_ptr, py.Add(), py.Constant(n_bytes))
+    test = py.Compare(test_lhs, [py.GtE()], [py_fromspace_end])
+    tuple_name = name_gen.tuple()
+    s.append(py.If(test, [PyCollect(n_bytes)], []))
+    s.append(py.Assign([tuple_name], PyAllocate(length, typ)))
+    for i, elt_name in enumerate(elt_names):
+        lhs = py.Subscript(tuple_name, py.Constant(i), py.Store())
+        s.append(py.Assign([lhs], elt_name))
+    return PyBegin(s, tuple_name)
+
+
+py_free_ptr = PyGlobal("free_ptr")
+py_fromspace_end = PyGlobal("fromspace_end")
+
+
 class RemoveComplexOperands:
-    def __init__(self):
-        self.tmp_cnt: int = 0
+    def __init__(self, name_gen: NameGen):
+        self.name_gen = name_gen
         self.tmp_bindings: list[tuple[py.Name, py.expr]] = []
 
     def run(self, p: py.Module) -> py.Module:
@@ -85,7 +176,7 @@ class RemoveComplexOperands:
 
     def _visit_stmt_meat(self, stmt: py.stmt) -> py.stmt:
         match stmt:
-            case py.Assign([lhs], value_):
+            case py.Assign([py.Name() as lhs], value_):
                 return py.Assign([lhs], self._visit_expr(value_, mk_atomic=False))
             case py.Expr(py.Call(py.Name("print"), args_)):
                 args = [self._visit_expr(arg, mk_atomic=True) for arg in args_]
@@ -117,8 +208,7 @@ class RemoveComplexOperands:
                 raise UnsupportedNode(expr)
 
     def _bind_to_tmp(self, value: py.expr) -> py.Name:
-        name = py.Name(f"$tmp_{self.tmp_cnt}")
-        self.tmp_cnt += 1
+        name = self.name_gen.tmp()
         self.tmp_bindings.append((name, value))
         return name
 
@@ -195,6 +285,43 @@ class RemoveComplexOperandsWhile(RemoveComplexOperandsIf):
                 return super()._visit_stmt_meat(stmt)
 
 
+class RemoveComplexOperandsTup(RemoveComplexOperandsWhile):
+    def _visit_stmt_meat(self, stmt: py.stmt) -> py.stmt:
+        match stmt:
+            case py.Assign([py.Subscript() as lhs_], value_):
+                lhs = self._visit_expr(lhs_, mk_atomic=False)
+                value = self._visit_expr(value_, mk_atomic=False)
+                return py.Assign([lhs], value)
+            case PyCollect():
+                return stmt
+            case py.If(py.Subscript() as s):
+                new_test = py.Compare(s, [py.Eq()], [pyTrue])
+                stmt.test = new_test
+                return super()._visit_stmt_meat(stmt)
+            case _:
+                return super()._visit_stmt_meat(stmt)
+
+    def _visit_expr_meat(self, expr: py.expr, mk_atomic: bool) -> py.expr:
+        match expr:
+            case py.Subscript(what_, at_, r):
+                what = self._visit_expr(what_, mk_atomic=True)
+                at = self._visit_expr(at_, mk_atomic=True)
+                return py.Subscript(what, at, r)
+            case py.Call(py.Name("len"), [arg_]):
+                return py.Call(py.Name("len"), [self._visit_expr(arg_, mk_atomic=True)])
+            case PyBegin(stmts_, expr_):
+                stmts = list(self._visit_stmts(stmts_))
+                return PyBegin(stmts, self._visit_expr(expr_, mk_atomic=mk_atomic))
+            case PyAllocate() | PyGlobal():
+                return expr
+            case py.IfExp(py.Subscript() as s):
+                new_test = py.Compare(s, [py.Eq()], [pyTrue])
+                expr.test = new_test
+                return super()._visit_expr_meat(expr, mk_atomic)
+            case _:
+                return super()._visit_expr_meat(expr, mk_atomic)
+
+
 class Block:
     name: str
     stmts: list[py.stmt]
@@ -216,10 +343,10 @@ class Block:
 
 
 class ExplicateControl:
-    def __init__(self):
+    def __init__(self, name_gen: NameGen):
+        self.name_gen = name_gen
         self.current_block: Block = Block(start_label)
         self.blocks: dict[str, list[py.stmt]] = {start_label: self.current_block.stmts}
-        self.block_cnt: int = 0
 
     def run(self, p: py.Module) -> CProgram:
         self._visit_module(p)
@@ -239,17 +366,21 @@ class ExplicateControl:
                 self._visit_assign(lhs, value_)
             case py.If(test, body_, orelse_):
                 self._visit_if(test, body_, orelse_)
-            case _:
+            case py.Expr() | CGoto():
                 self._emit(stmt)
+            case _:
+                raise UnsupportedNode(stmt)
 
-    def _visit_assign(self, lhs: py.Name, value: py.expr) -> None:
+    def _visit_assign(self, lhs: py.Name | py.Subscript, value: py.expr) -> None:
         match value:
             case py.IfExp(test, PyBegin(body_, body_r), PyBegin(orelse_, orelse_r)):
                 body_assign = py.Assign([lhs], body_r)
                 orelse_assign = py.Assign([lhs], orelse_r)
                 self._visit_if(test, body_ + [body_assign], orelse_ + [orelse_assign])
-            case _:
+            case py.Constant() | py.Name() | py.BinOp() | py.UnaryOp() | py.Call() | py.Compare():
                 self._emit(py.Assign([lhs], value))
+            case _:
+                raise UnsupportedNode(value)
 
     def _visit_if(self, test: py.expr, body_: list[py.stmt], orelse_: list[py.stmt]):
         original_block = self.current_block
@@ -298,14 +429,10 @@ class ExplicateControl:
         self.current_block = block
 
     def _mk_block(self) -> Block:
-        name = self._mk_fresh_block_name()
+        name = self.name_gen.block_name()
         block = Block(name)
         self.blocks[name] = block.stmts
         return block
-
-    def _mk_fresh_block_name(self) -> str:
-        self.block_cnt += 1
-        return label_name(f"block_{self.block_cnt}")
 
 
 class ExplicateControlWhile(ExplicateControl):
@@ -319,6 +446,27 @@ class ExplicateControlWhile(ExplicateControl):
                 super()._visit_if(test_, body, [])
             case _:
                 super()._visit_stmt(stmt)
+
+
+class ExplicateControlTup(ExplicateControlWhile):
+    def _visit_stmt(self, stmt: py.stmt) -> None:
+        match stmt:
+            case py.Assign([py.Subscript() as lhs], value_):
+                self._visit_assign(lhs, value_)
+            case PyCollect():
+                self._emit(stmt)
+            case _:
+                return super()._visit_stmt(stmt)
+
+    def _visit_assign(self, lhs: py.Name | py.Subscript, value: py.expr) -> None:
+        match value:
+            case PyBegin(stmts, expr):
+                self._visit_stmts(stmts)
+                self._visit_assign(lhs, expr)
+            case PyGlobal() | PyAllocate() | py.Subscript():
+                self._emit(py.Assign([lhs], value))
+            case _:
+                super()._visit_assign(lhs, value)
 
 
 class X86Builder:
@@ -449,7 +597,7 @@ class SelectInstructionsIf(SelectInstructions):
                 arg = take_atomic_arg(arg_)
                 if arg != destination:
                     self._emit(movq(arg, destination))
-                self._emit(xorq(imm1, destination))
+                self._emit(xorq(1, destination))
             case py.Compare(a_, [op], [b_]):
                 a = take_atomic_arg(a_)
                 b = take_atomic_arg(b_)
@@ -487,6 +635,51 @@ class SelectInstructionsIf(SelectInstructions):
         super()._emit(i)
 
 
+class SelectInstructionsTup(SelectInstructionsIf):
+    def __init__(self, name_gen: NameGen):
+        super().__init__()
+        self.name_gen = name_gen
+
+    def _visit_stmt(self, stmt: py.stmt):
+        match stmt:
+            case py.Assign([py.Subscript(py.Name(tup), py.Constant(at))], value):
+                self._emit(movq(x86.Variable(tup), r11))
+                dst = x86.Deref(r11.id, 8 * at + 8)
+                return self._visit_assign(dst, value)
+            case PyCollect(n_bytes):
+                self._emit(movq(r15, rdi))
+                self._emit(movq(n_bytes, rsi))
+                self._emit(callq_collect)
+            case _:
+                return super()._visit_stmt(stmt)
+
+    def _visit_assign(self, destination: x86.arg, value: py.expr):
+        match value:
+            case py.Subscript(py.Name(tup), py.Constant(at)):
+                self._emit(movq(x86.Variable(tup), r11))
+                src = x86.Deref(r11.id, 8 * at + 8)
+                self._emit(movq(src, destination))
+            case py.Call(py.Name("len"), [py.Name(tup)]):
+                self._emit(movq(x86.Variable(tup), r11))
+                self._emit(movq(x86.Deref(r11.id, 0), r11))
+                self._emit(sarq(1, r11))
+                self._emit(andq(2**6 - 1, r11))
+                self._emit(movq(r11, destination))
+            case PyAllocate(l, typ):
+                self._emit(movq(x86_free_ptr, r11))
+                self._emit(addq(8 * l + 8, x86_free_ptr))
+                self._emit(movq(mk_tag(typ), x86.Deref(r11.id, 0)))
+                self._emit(movq(r11, destination))
+            case PyBegin(stmts, expr):
+                for stmt in stmts:
+                    self._visit_stmt(stmt)
+                self._visit_assign(destination, expr)
+            case PyGlobal(name):
+                self._emit(movq(x86.Global(name), destination))
+            case _:
+                return super()._visit_assign(destination, value)
+
+
 def try_take_atomic_arg(e: py.expr) -> None | x86.arg:
     match e:
         case py.Name(n):
@@ -521,24 +714,51 @@ def get_compare_kind(op: py.cmpop) -> str:
         raise UnsupportedNode(op)
 
 
-def movq(source: x86.arg, destination: x86.arg):
-    return x86.Instr("movq", [source, destination])
+def mk_tag(typ: Type) -> int:
+    if not isinstance(typ, TupleType):
+        raise CompilerError(f"Expected a TupleType, got {typ}")
+    l = len(typ.types)
+    if l > max_tuple_size:
+        raise CompilerError(f"The maximum size of tuples allowed is {max_tuple_size}")
+    pointer_mask = as_bit_string(map(is_pointer, typ.types))[::-1]
+    bits = f"{pointer_mask:>0{max_tuple_size}}{l:06b}0"
+    return int(bits, 2)
+
+
+def is_pointer(typ: Type) -> bool:
+    return isinstance(typ, TupleType)
+
+
+def as_bit_string(bs: Iterable[bool]) -> str:
+    return "".join(str(int(x)) for x in bs)
+
+
+max_tuple_size = 50
+
+
+def mk_binary_asm_operation(
+    name: str,
+) -> Callable[[x86.arg | int, x86.arg | int], x86.Instr]:
+    def inner(arg: x86.arg | int, destination: x86.arg | int):
+        if isinstance(arg, int):
+            arg = x86.Immediate(arg)
+        if isinstance(destination, int):
+            destination = x86.Immediate(destination)
+        return x86.Instr(name, [arg, destination])
+
+    return inner
+
+
+movq = mk_binary_asm_operation("movq")
+subq = mk_binary_asm_operation("subq")
+addq = mk_binary_asm_operation("addq")
+xorq = mk_binary_asm_operation("xorq")
+andq = mk_binary_asm_operation("andq")
+sarq = mk_binary_asm_operation("sarq")
 
 
 def negq(destination: x86.arg):
     return x86.Instr("negq", [destination])
-
-
-def subq(addend: x86.arg, destination: x86.arg):
-    return x86.Instr("subq", [addend, destination])
-
-
-def addq(addend: x86.arg, destination: x86.arg):
-    return x86.Instr("addq", [addend, destination])
-
-
-def xorq(a: x86.arg, b: x86.arg):
-    return x86.Instr("xorq", [a, b])
 
 
 def cmpq(*, rhs: x86.arg, lhs: x86.arg):
@@ -596,12 +816,14 @@ main_label = label_name("main")
 start_label = label_name("start")
 conclusion_label = label_name("conclusion")
 
-callq_read_int = x86.Callq(label_name("read_int"), 0)
+callq_collect = x86.Callq(label_name("collect"), 2)
+callq_initialize = x86.Callq(label_name("initialize"), 2)
 callq_print_int = x86.Callq(label_name("print_int"), 1)
+callq_read_int = x86.Callq(label_name("read_int"), 0)
 retq = x86.Instr("retq", [])
 
-imm1 = x86.Immediate(1)
-imm8 = x86.Immediate(8)
+x86_free_ptr = x86.Global("free_ptr")
+x86_ptrstack_begin = x86.Global("rootstack_begin")
 al = x86.ByteReg("al")
 rax = x86.Reg("rax")
 rbx = x86.Reg("rbx")
@@ -634,8 +856,8 @@ Color = int
 
 reg_to_color: MappingProxyType[x86.Reg, Color] = MappingProxyType(
     {
-        r15: -5,
-        r11: -4,
+        r15: -4,
+        r11: -3,
         rsp: -2,
         rax: -1,
         rcx: 0,
@@ -659,19 +881,15 @@ max_reg_color = max(color_to_reg.keys())
 
 
 class AssignHomes:
-    def __init__(self):
-        self.n_spilled_vars = 0
+    def __init__(self, var_types: dict[str, type]):
+        self.var_types: dict[str, Type] = var_types
+        self.val_stack: dict[Color, x86_raw_loc] = {}
+        self.ptr_stack: dict[Color, x86_raw_loc] = {}
+        self.used_callees: set[x86.Reg] = set()
+        self.colors: dict[x86.location, Color] = {}
 
     def run(self, prog: X86Program) -> X86Program:
-        colors = ColorLocations(prog).run()
-        self.used_callees = {
-            r
-            for c in colors.values()
-            if (r := color_to_reg.get(c)) in callee_saved_regs
-        }
-        self.locations: dict[x86.location, x86.arg] = {
-            v: self.__color_to_loc(c) for (v, c) in colors.items()
-        }
+        self.colors = ColorLocations(prog, self.var_types).run()
         return self._visit_program(prog)
 
     def _visit_program(self, prog: X86Program) -> X86Program:
@@ -691,27 +909,41 @@ class AssignHomes:
                 return instr
 
     def _visit_arg(self, arg: x86.arg) -> x86.arg:
+        if arg in callee_saved_regs:
+            self.used_callees.add(arg)
         if isinstance(arg, x86.Variable):
-            return self.locations[arg]
+            return self.__get_var_loc(arg)
         else:
             return arg
 
-    def __color_to_loc(self, c: Color) -> x86.Reg | x86.Deref:
-        if (reg := color_to_reg.get(c)) is not None:
-            return reg
-        index = c - max_reg_color
-        self.n_spilled_vars = max(index, self.n_spilled_vars)
-        return x86.Deref(rsp.id, (index - 1) * WORD_SIZE)
+    def __get_var_loc(self, var: x86.Variable) -> x86_raw_loc:
+        c = self.colors[var]
+        typ = self.var_types[var.id]
+        if is_pointer(typ):
+            the_stack = self.ptr_stack
+            mk_loc = lambda i: x86.Deref(r15.id, ~i * WORD_SIZE)
+        else:
+            the_stack = self.val_stack
+            mk_loc = lambda i: x86.Deref(rsp.id, i * WORD_SIZE)
+        if loc := the_stack.get(c):
+            return loc
+        loc = mk_loc(len(the_stack))
+        the_stack[c] = loc
+        return loc
+
+
+x86_raw_loc = x86.Reg | x86.Deref
 
 
 class ColorLocations:
-    def __init__(self, prog: X86Program):
+    def __init__(self, prog: X86Program, var_types: dict[str, type]):
+        self.var_types = var_types
         self.blocks: dict[str, list[x86.instr]] = extract_program_body(prog)
         self.live_befores = get_live_befores(prog)
         self.move_graph: Graph[x86.location] = Graph()
         self.interference_graph: Graph[x86.location] = Graph()
 
-    def run(self) -> dict[location, Color]:
+    def run(self) -> dict[x86.location, Color]:
         for label in self.blocks.keys():
             self._visit_block(label)
         return color_graph(self.interference_graph, self.move_graph)
@@ -744,17 +976,30 @@ class ColorLocations:
             self.move_graph.add_vertex(v)
         match parse_movq(i):
             case [src, dst]:
-                assert isinstance(dst, x86.location), "aaah"
+                if not isinstance(dst, x86.location):
+                    return
                 if isinstance(src, x86.location):
                     self.move_graph.connect(src, dst)
                 for loc in live_after:
                     if loc != src and loc != dst:
                         self.interference_graph.connect(dst, loc)
                 return
+        if isinstance(i, PyCollect):
+            for loc in live_after:
+                if not self._is_pointer(loc):
+                    continue
+                for reg in callee_saved_regs:
+                    self.interference_graph.connect(reg, loc)
         for w in write_set:
             for loc in live_after:
                 if loc != w:
                     self.interference_graph.connect(w, loc)
+
+    def _is_pointer(self, loc: x86.location) -> bool:
+        if not isinstance(loc, x86.Variable):
+            return False
+        typ = self.var_types[loc.id]
+        return is_pointer(typ)
 
 
 def get_live_befores(prog: X86Program) -> dict[str, set[x86.location]]:
@@ -782,7 +1027,7 @@ def build_cfg(prog: X86Program) -> DirectedAdjList:
         visited.add(head)
         for instr in blocks[head]:
             if isinstance(instr, (x86.Jump, x86.JumpIf)):
-                g.add_edge(head, instr.label)
+                g.add_edge(instr.label, head)
                 worklist.append(instr.label)
     return g
 
@@ -815,7 +1060,7 @@ def get_read_write_sets(i: x86.instr) -> tuple[set[x86.location], set[x86.locati
             rs, ws = [rax], [dst]
         case x86.Instr("negq", [dst]):
             rs, ws = [dst], [dst]
-        case x86.Instr("subq" | "addq", [arg, dst]):
+        case x86.Instr("subq" | "addq" | "andq" | "sarq", [arg, dst]):
             rs, ws = [arg, dst], [dst]
         case x86.Callq(name, arity):
             if arity > len(arg_passing_regs):
@@ -828,28 +1073,32 @@ def get_read_write_sets(i: x86.instr) -> tuple[set[x86.location], set[x86.locati
             rs, ws = [], [rax]
         case _:
             raise UnsupportedInstr(i)
-    return (set(extract_locations(rs)), set(extract_locations(ws)))
+    return (set(extract_locations(*rs)), set(extract_locations(*ws)))
 
 
-def extract_locations(args: Iterable[x86.arg]) -> Iterable[x86.location]:
+def extract_locations(*args: x86.arg) -> Iterable[x86.location]:
     for arg in args:
         if isinstance(arg, x86.location):
             yield arg
-        elif not isinstance(arg, x86.Immediate):
+        elif isinstance(arg, x86.Deref):
+            if arg.reg != r11.id:
+                raise CompilerError(f"expected only r11 dereferences, but got: {arg}")
+        elif not isinstance(arg, (x86.Immediate, x86.Global)):
             raise CompilerError(
-                f"discover_live encountered a non-location, non-immediate argument: "
-                f": {type(arg)}"
+                f"encountered a non-location, non-immediate argument: {type(arg)}"
             )
 
 
 COLOR_LIMIT = 10_000
 
 
-def color_graph(graph: Graph, move_graph: Graph[x86.location]) -> dict[location, Color]:
-    def saturation(v: location) -> set[Color]:
+def color_graph(
+    graph: Graph, move_graph: Graph[x86.location]
+) -> dict[x86.location, Color]:
+    def saturation(v: x86.location) -> set[Color]:
         return {c for x in graph.neighbours(v) if (c := colors.get(x)) is not None}
 
-    def get_move_color(v: location, v_satur: set[Color]) -> Color:
+    def get_move_color(v: x86.location, v_satur: set[Color]) -> Color:
         opts = (colors.get(x, COLOR_LIMIT) for x in move_graph.neighbours(v))
         opts = (c for c in opts if c >= 0 and c not in v_satur)
         return min(opts, default=COLOR_LIMIT)
@@ -860,13 +1109,13 @@ def color_graph(graph: Graph, move_graph: Graph[x86.location]) -> dict[location,
                 return k
         raise CompilerError("Too many colors were required")
 
-    def assign_color(v: location, c: Color):
+    def assign_color(v: x86.location, c: Color):
         colors[v] = c
         for u in chain(graph.neighbours(v), move_graph.neighbours(v)):
             if u not in colors:
                 queue.increase_key(u)
 
-    def key_f(v: location):
+    def key_f(v: x86.location):
         v_satur = saturation(v)
         return (len(v_satur), get_move_color(v, v_satur), hash(v))
 
@@ -932,7 +1181,7 @@ class PatchInstructions(X86Builder):
         ), "The destination argument shouldn't be an immediate?.."
         return any(
             (
-                isinstance(arg1, x86.Deref) and isinstance(arg2, x86.Deref),
+                not (isinstance(arg1, x86.Reg) or isinstance(arg2, x86.Reg)),
                 PatchInstructions.__is_big_immediate(arg1),
             )
         )
@@ -956,20 +1205,30 @@ def tracing_res(f):
 
 class Compiler:
     def __init__(self):
-        self.__n_spilled_vars: None | int = None
+        self.name_gen = NameGen()
+        self.__n_spilled_vals: None | int = None
+        self.__n_spilled_ptrs: None | int = None
         self.__used_callees: None | list[x86.Reg] = None
+        self.__var_types: None | dict[str, Type] = None
+
+    # @tracing_res
+    def expose_allocation(self, p: py.Module) -> py.Module:
+        TypeCheckLtup().type_check(p)  # to create 'has_type' fields
+        return ExposeAllocation(self.name_gen).run(p)
 
     # @tracing_res
     def remove_complex_operands(self, p: py.Module) -> py.Module:
-        return RemoveComplexOperandsWhile().run(p)
+        return RemoveComplexOperandsTup(self.name_gen).run(p)
 
     # @tracing_res
     def explicate_control(self, p: py.Module) -> CProgram:
-        return ExplicateControlWhile().run(p)
+        return ExplicateControlTup(self.name_gen).run(p)
 
     # @tracing_res
     def select_instructions(self, p: CProgram) -> X86Program:
-        return SelectInstructionsIf().run(p)
+        self.__var_types = extract_var_types(p)
+        self.__var_types[self.name_gen.the_x86_tmp().id] = IntType()
+        return SelectInstructionsTup(self.name_gen).run(p)
 
     # @tracing_res
     def remove_jumps(self, p: X86Program) -> X86Program:
@@ -977,10 +1236,13 @@ class Compiler:
 
     # @tracing_res
     def assign_homes(self, p: X86Program) -> X86Program:
+        if self.__var_types is None:
+            raise MissingPass(self.select_instructions.__qualname__)
         p = self.remove_jumps(p)
-        visitor = AssignHomes()
+        visitor = AssignHomes(self.__var_types)
         result = visitor.run(p)
-        self.__n_spilled_vars = visitor.n_spilled_vars + 1
+        self.__n_spilled_vals = len(visitor.val_stack)
+        self.__n_spilled_ptrs = len(visitor.ptr_stack)
         self.__used_callees = list(visitor.used_callees)
         return result
 
@@ -991,26 +1253,47 @@ class Compiler:
     # @tracing_res
     def prelude_and_conclusion(self, p: X86Program) -> X86Program:
         body = extract_program_body(p)
-        if self.__n_spilled_vars is None or self.__used_callees is None:
+        if (
+            self.__n_spilled_vals is None
+            or self.__n_spilled_ptrs is None
+            or self.__used_callees is None
+        ):
             raise MissingPass(self.assign_homes.__qualname__)
         n_used_callees = len(self.__used_callees)
-        total_used_space = align16(8 * (n_used_callees + self.__n_spilled_vars))
-        vars_used_space = total_used_space - 8 * n_used_callees
-        stack_arg = x86.Immediate(vars_used_space)
-        reg_prelude: list[x86.instr] = [pushq(x) for x in self.__used_callees]
-        reg_conclusion: list[x86.instr] = [popq(x) for x in self.__used_callees[::-1]]
-        prelude = reg_prelude + [subq(stack_arg, rsp), x86.Jump(start_label)]
-        conclusion = [addq(stack_arg, rsp), *reg_conclusion, retq]
+        total_used_stack = align_stack(8 * (n_used_callees + self.__n_spilled_vals))
+        vals_used_stack = total_used_stack - 8 * n_used_callees
+
+        prelude: list[x86.instr] = [
+            *(pushq(x) for x in self.__used_callees),
+            subq(vals_used_stack, rsp),
+            movq(ptr_stack_size, rdi),
+            movq(heap_size, rsi),
+            callq_initialize,
+            movq(x86_ptrstack_begin, r15),
+            *(movq(0, x86.Deref(r15.id, 8 * i)) for i in range(self.__n_spilled_ptrs)),
+            addq(self.__n_spilled_ptrs, r15),
+            x86.Jump(start_label),
+        ]
+
+        conclusion: list[x86.instr] = [
+            subq(self.__n_spilled_ptrs, r15),
+            addq(vals_used_stack, rsp),
+            *(popq(x) for x in reversed(self.__used_callees)),
+            retq,
+        ]
         return X86Program({main_label: prelude, **body, conclusion_label: conclusion})
 
+
+ptr_stack_size = 64 * 256
+heap_size = 64 * 256
 
 K = TypeVar("K")
 V = TypeVar("V")
 T = TypeVar("T")
 
 
-def align16(x: int) -> int:
-    # weirdly, alignment needs to be 16*n + 8
+def align_stack(x: int) -> int:
+    # alignment needs to be 16*n + 8, because address is already on the stack
     q, r = divmod(x, 16)
     if r > 8:
         return 16 * (q + 1) + 8
@@ -1022,6 +1305,19 @@ def extract_program_body(prog: X86Program) -> dict[str, list[x86.instr]]:
     if not isinstance(prog.body, dict):
         raise CompilerError("We now only support blocks")
     return prog.body
+
+
+def extract_type(node: py.AST) -> Type:
+    if typ := getattr(node, "has_type"):
+        return typ
+    raise MissingPass("TypeCheckLtup")
+
+
+def extract_var_types(p: CProgram) -> dict[str, Type]:
+    TypeCheckCtup().type_check(p)  # to create 'var_types' fields
+    if (typ := getattr(p, "var_types")) is not None:
+        return typ
+    raise AssertionError("TypeCheckCtup didn't create 'var_types'?")
 
 
 def dict_set_fresh(d: dict[K, V], key: K, value: V):
@@ -1050,3 +1346,30 @@ class Graph(Generic[T]):
 
     def vertices(self) -> Iterable[T]:
         return self.edges.keys()
+
+
+class NameGen:
+    def __init__(self):
+        self._n_tuple_elts = 0
+        self._n_blocks = 0
+        self._n_tmps = 0
+        self._n_tuples = 0
+
+    def tuple_elt(self) -> py.Name:
+        self._n_tuple_elts += 1
+        return py.Name(f"$tuple_elt#{self._n_tuple_elts}")
+
+    def block_name(self) -> str:
+        self._n_blocks += 1
+        return label_name(f"block_{self._n_blocks}")
+
+    def tuple(self) -> py.Name:
+        self._n_tuples += 1
+        return py.Name(f"$tuple#{self._n_tuples}")
+
+    def tmp(self) -> py.Name:
+        self._n_tmps += 1
+        return py.Name(f"$tmp#{self._n_tmps}")
+
+    def the_x86_tmp(self) -> x86.Variable:
+        return x86.Variable("$tmp")

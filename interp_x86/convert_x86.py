@@ -9,7 +9,7 @@ from x86_ast import *
 
 
 def convert_int(value):
-    return Tree("int_a", [value])    
+    return Tree("int_a", [value])
     # if value >= 0:
     #     return Tree("int_a", [value])
     # else:
@@ -27,7 +27,7 @@ def convert_arg(arg):
             return Tree('mem_a', [convert_int(offset), reg])
         case ByteReg(id):
             return Tree('reg_a', [id])
-        case GlobalValue(id):
+        case Global(id):
             return Tree('global_val_a', [id, 'rip'])
         case _:
             raise Exception('convert_arg: unhandled ' + repr(arg))

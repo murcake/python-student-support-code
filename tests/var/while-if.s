@@ -1,42 +1,49 @@
 	.globl main
 	.align 16
 main:
-    pushq %rbx
-    subq $16, %rsp
+    subq $24, %rsp
+    movq $16384, %rdi
+    movq $16384, %rsi
+    callq initialize
+    movq rootstack_begin(%rip), %r15
+    addq $0, %r15
     jmp start
 
 	.align 16
 start:
-    movq $0, %rbx
-    jmp block_1
+    movq $0, %rax
+    movq %rax, 0(%rsp)
+    jmp block_25
 
 	.align 16
-block_1:
+block_25:
     callq read_int
-    movq %rax, %rcx
-    cmpq $5, %rcx
-    je block_2
-    jmp block_4
+    movq %rax, 8(%rsp)
+    movq $5, %rax
+    cmpq %rax, 8(%rsp)
+    je block_26
+    jmp block_28
 
 	.align 16
-block_2:
-    addq $42, %rbx
-    jmp block_1
+block_26:
+    movq $42, %rax
+    addq %rax, 0(%rsp)
+    jmp block_25
 
 	.align 16
-block_4:
-    movq %rbx, %rdi
+block_28:
+    movq 0(%rsp), %rdi
     callq print_int
     movq $0, %rax
     jmp conclusion
 
 	.align 16
 conclusion:
-    addq $16, %rsp
-    popq %rbx
+    subq $0, %r15
+    addq $24, %rsp
     retq 
 
 	.align 16
-block_7:
+block_31:
 
 

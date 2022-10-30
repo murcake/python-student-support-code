@@ -1,147 +1,168 @@
 	.globl main
 	.align 16
 main:
-    pushq %r14
-    pushq %rbp
-    pushq %rbx
-    pushq %r12
-    pushq %r13
-    subq $32, %rsp
+    subq $56, %rsp
+    movq $16384, %rdi
+    movq $16384, %rsi
+    callq initialize
+    movq rootstack_begin(%rip), %r15
+    addq $0, %r15
     jmp start
 
 	.align 16
 start:
     callq read_int
-    movq %rax, %r14
-    callq read_int
     movq %rax, 0(%rsp)
-    cmpq 0(%rsp), %r14
-    jne block_4
-    jmp block_2
+    callq read_int
+    movq %rax, 8(%rsp)
+    movq 8(%rsp), %rax
+    cmpq %rax, 0(%rsp)
+    jne block_69
+    jmp block_67
 
 	.align 16
-block_1:
-    cmpq 0(%rsp), %r14
+block_66:
+    movq 8(%rsp), %rax
+    cmpq %rax, 0(%rsp)
     setl %al
-    movzbq %al, %rbx
-    cmpq 0(%rsp), %r14
+    movzbq %al, %rax
+    movq %rax, 16(%rsp)
+    movq 8(%rsp), %rax
+    cmpq %rax, 0(%rsp)
     setl %al
-    movzbq %al, %r12
-    cmpq 0(%rsp), %r14
+    movzbq %al, %rax
+    movq %rax, 24(%rsp)
+    movq 8(%rsp), %rax
+    cmpq %rax, 0(%rsp)
     setg %al
-    movzbq %al, %r12
-    cmpq 0(%rsp), %r14
+    movzbq %al, %rax
+    movq %rax, 32(%rsp)
+    movq 8(%rsp), %rax
+    cmpq %rax, 0(%rsp)
     setge %al
-    movzbq %al, %r12
-    jmp block_3
+    movzbq %al, %rax
+    movq %rax, 40(%rsp)
+    jmp block_68
 
 	.align 16
-block_2:
-    movq $1, %rbx
-    movq $1, %r12
-    movq $1, %r12
-    movq $1, %r12
-    jmp block_3
+block_67:
+    movq $1, %rax
+    movq %rax, 16(%rsp)
+    movq $1, %rax
+    movq %rax, 24(%rsp)
+    movq $1, %rax
+    movq %rax, 32(%rsp)
+    movq $1, %rax
+    movq %rax, 40(%rsp)
+    jmp block_68
 
 	.align 16
-block_3:
-    cmpq $1, %rbx
-    je block_37
-    jmp block_32
+block_68:
+    movq $1, %rax
+    cmpq %rax, 16(%rsp)
+    je block_102
+    jmp block_97
 
 	.align 16
-block_4:
-    cmpq 0(%rsp), %r14
-    je block_1
-    jmp block_1
+block_69:
+    movq 8(%rsp), %rax
+    cmpq %rax, 0(%rsp)
+    je block_66
+    jmp block_66
 
 	.align 16
-block_6:
+block_71:
 
 	.align 16
-block_12:
+block_77:
 
 	.align 16
-block_23:
-    cmpq 0(%rsp), %r14
-    jne block_4
-    jmp block_2
+block_88:
+    movq 8(%rsp), %rax
+    cmpq %rax, 0(%rsp)
+    jne block_69
+    jmp block_67
 
 	.align 16
-block_24:
+block_89:
 
 	.align 16
-block_31:
-    cmpq $1, %r12
-    je block_34
-    movq $0, 8(%rsp)
-    jmp block_36
+block_96:
+    movq $1, %rax
+    cmpq %rax, 32(%rsp)
+    je block_99
+    movq $0, %rax
+    movq %rax, 32(%rsp)
+    jmp block_101
 
 	.align 16
-block_32:
-    movq $0, %rbp
-    jmp block_33
+block_97:
+    movq $0, %rax
+    movq %rax, 32(%rsp)
+    jmp block_98
 
 	.align 16
-block_33:
-    cmpq $1, %rbp
-    je block_47
-    movq %r14, %rcx
-    subq 0(%rsp), %rcx
-    movq %rcx, %r13
-    jmp block_48
+block_98:
+    movq $1, %rax
+    cmpq %rax, 32(%rsp)
+    je block_112
+    movq 0(%rsp), %rax
+    movq %rax, 40(%rsp)
+    movq 8(%rsp), %rax
+    subq %rax, 40(%rsp)
+    jmp block_113
 
 	.align 16
-block_34:
-    movq %r12, 8(%rsp)
-    jmp block_36
+block_99:
+    movq 40(%rsp), %rax
+    movq %rax, 32(%rsp)
+    jmp block_101
 
 	.align 16
-block_35:
-    movq $0, 8(%rsp)
-    jmp block_36
+block_100:
+    movq $0, %rax
+    movq %rax, 32(%rsp)
+    jmp block_101
 
 	.align 16
-block_36:
-    movq 8(%rsp), %rbp
-    jmp block_33
+block_101:
+    jmp block_98
 
 	.align 16
-block_37:
-    cmpq $1, %r12
-    je block_31
-    jmp block_32
+block_102:
+    movq $1, %rax
+    cmpq %rax, 24(%rsp)
+    je block_96
+    jmp block_97
 
 	.align 16
-block_39:
+block_104:
 
 	.align 16
-block_46:
-    movq %r14, %rcx
-    subq 0(%rsp), %rcx
-    movq %rcx, %r13
-    jmp block_48
+block_111:
+    movq 0(%rsp), %rax
+    movq %rax, 40(%rsp)
+    movq 8(%rsp), %rax
+    subq %rax, 40(%rsp)
+    jmp block_113
 
 	.align 16
-block_47:
-    movq $0, %r13
-    jmp block_48
+block_112:
+    movq $0, %rax
+    movq %rax, 40(%rsp)
+    jmp block_113
 
 	.align 16
-block_48:
-    movq %r13, %rdi
+block_113:
+    movq 40(%rsp), %rdi
     callq print_int
     movq $0, %rax
     jmp conclusion
 
 	.align 16
 conclusion:
-    addq $32, %rsp
-    popq %r13
-    popq %r12
-    popq %rbx
-    popq %rbp
-    popq %r14
+    subq $0, %r15
+    addq $56, %rsp
     retq 
 
 
